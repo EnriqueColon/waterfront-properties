@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Python
+backend/venv/
+backend/__pycache__/
+__pycache__/
+*.pyc
+*.pyo
+
+# Secrets & local config
+backend/.env
+backend/service_account.json
+
+# Database (runtime artifact)
+backend/miami_waterfront.db
+*.db
+
+# OS
+.DS_Store
