@@ -5,8 +5,8 @@ export function SortButton({ col, sort, order, onSort }) {
       onClick={e => { e.stopPropagation(); onSort(col); }}
       style={{
         background: "none", border: "none", cursor: "pointer",
-        color: active ? "#b88c3c" : "#2e3d52",
-        fontSize: 9, marginLeft: 3, padding: 0,
+        color: active ? "#b88c3c" : "#cbd5e1",
+        fontSize: 10, marginLeft: 3, padding: 0,
         verticalAlign: "middle",
       }}
     >
