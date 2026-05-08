@@ -11,7 +11,7 @@ Miami-Dade Waterfront Property Ingestor  v2
 
 Flask API on :5050  |  APScheduler auto-refresh every 24 h
 """
-import sqlite3, requests, time, threading, math
+import sqlite3, requests, time, threading, math, os
 from datetime import datetime
 from shapely.geometry import shape, Point, MultiLineString
 from shapely.ops import unary_union
@@ -52,8 +52,8 @@ COASTAL_AREAS = [
 CANAL_BUFFER_DEG  = 0.00015   # ~15 m buffer around canal/stream lines
 GRID_STEP         = 0.05       # 0.05° grid cells for parcel batching (~5 km)
 PAGE              = 1000
-DB_PATH           = "miami_waterfront.db"
-API_PORT          = 5050
+DB_PATH           = os.path.join(os.path.dirname(os.path.abspath(__file__)), "miami_waterfront.db")
+API_PORT          = int(os.environ.get("PORT", 5050))
 
 # ─── Pipeline state ────────────────────────────────────────────────────────────
 _state = {"running": False, "stage": "complete", "progress": 100,
