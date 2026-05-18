@@ -431,11 +431,23 @@ def stage_store(parcel_map):
         else:              inserted += 1
 
         cur.execute("""
-            INSERT OR REPLACE INTO properties
+            INSERT INTO properties
               (folio,address,community,wf_type,prop_type,sqft,lot_sqft,beds,baths,
                year_built,assessed,land_value,building_value,flood_zone,
                water_feet,owner,lat,lng,water_body,updated_at)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(folio) DO UPDATE SET
+              address=excluded.address, community=excluded.community,
+              wf_type=excluded.wf_type, prop_type=excluded.prop_type,
+              sqft=excluded.sqft, lot_sqft=excluded.lot_sqft,
+              beds=excluded.beds, baths=excluded.baths,
+              year_built=excluded.year_built,
+              assessed=COALESCE(excluded.assessed, assessed),
+              land_value=COALESCE(excluded.land_value, land_value),
+              building_value=COALESCE(excluded.building_value, building_value),
+              flood_zone=excluded.flood_zone, water_feet=excluded.water_feet,
+              owner=excluded.owner, lat=excluded.lat, lng=excluded.lng,
+              water_body=excluded.water_body, updated_at=excluded.updated_at
         """, (folio, address, community, p["wf_type"], prop_type(a.get("DOR_CODE_CUR")),
               sqft, lot_sqft, beds, baths, year_built, assessed, land_val, bldg_val,
               p.get("flood_zone","X"), p.get("water_feet",25), owner,
