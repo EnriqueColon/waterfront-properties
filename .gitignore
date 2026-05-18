@@ -12,6 +12,8 @@ __pycache__/
 *.pyo
 
 # Secrets & local config
+.env
+.env.local
 backend/.env
 backend/service_account.json
 
