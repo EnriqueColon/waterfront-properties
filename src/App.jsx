@@ -92,7 +92,8 @@ export default function App() {
             <span style={{ fontWeight:300, color:"#64748b", marginLeft:10, fontSize:12 }}>Asset Intelligence</span>
           </div>
           <div style={{ fontSize:10, color:"#94a3b8", letterSpacing:0.5, marginTop:5 }}>
-            {stats.total_count.toLocaleString()} properties · MDC Property Appraiser · Live data
+            {stats.error ? "Backend unavailable · " : stats.total_count > 0 ? `${stats.total_count.toLocaleString()} properties · ` : "Connecting… · "}
+            MDC Property Appraiser · Live data
           </div>
         </div>
         <div style={{ display:"flex", gap:8, alignItems:"center" }}>
@@ -122,6 +123,14 @@ export default function App() {
             running={pipeline.pRunning} lastRun={pipeline.lastRun}
             onTrigger={pipeline.triggerPipeline}
           />
+
+          {stats.error && (
+            <div style={{ marginBottom:12, padding:"10px 14px", background:"#fff7ed", border:"1px solid #fed7aa", borderRadius:6, fontSize:12, color:"#9a3412", display:"flex", alignItems:"center", gap:8 }}>
+              <span style={{ fontWeight:600 }}>Backend unavailable</span>
+              — stats are not loading. Make sure the Flask server is running:
+              <code style={{ background:"#fef3c7", padding:"1px 6px", borderRadius:3, fontFamily:"monospace" }}>python backend/ingestor.py</code>
+            </div>
+          )}
 
           {/* KPI cards */}
           <div style={{ display:"grid", gridTemplateColumns:"repeat(6,1fr)", gap:8, marginBottom:16 }}>

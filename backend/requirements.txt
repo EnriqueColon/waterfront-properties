@@ -3,5 +3,6 @@ flask-cors>=4.0
 apscheduler>=3.10
 shapely>=2.0
 requests>=2.31
+python-dotenv>=1.0
 google-auth>=2.0
 google-api-python-client>=2.0

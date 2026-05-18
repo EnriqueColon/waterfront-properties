@@ -13,6 +13,8 @@ Flask API on :5050  |  APScheduler auto-refresh every 24 h
 """
 import sqlite3, requests, time, threading, math, os
 from datetime import datetime
+from dotenv import load_dotenv
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 from shapely.geometry import shape, Point, MultiLineString
 from shapely.ops import unary_union
 
