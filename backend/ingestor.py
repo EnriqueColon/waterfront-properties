@@ -57,6 +57,39 @@ PAGE              = 1000
 DB_PATH           = os.path.join(os.path.dirname(os.path.abspath(__file__)), "miami_waterfront.db")
 API_PORT          = int(os.environ.get("PORT", 5050))
 
+# ─── In-memory cache (invalidated after pipeline / scan / sync) ───────────────
+_cache = {}
+_CACHE_TTL = 300  # 5 minutes
+
+def _cached(key, builder):
+    now = time.time()
+    entry = _cache.get(key)
+    if entry and now - entry["ts"] < _CACHE_TTL:
+        return entry["val"]
+    val = builder()
+    _cache[key] = {"val": val, "ts": now}
+    return val
+
+def _invalidate_cache():
+    _cache.clear()
+
+# ─── Shared DB connection (reused across requests) ───────────────────────────
+def _get_db():
+    con = sqlite3.connect(DB_PATH, check_same_thread=False)
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA journal_mode=WAL")
+    return con
+
+_db_conn = None
+_db_lock = threading.Lock()
+
+def get_db():
+    global _db_conn
+    with _db_lock:
+        if _db_conn is None:
+            _db_conn = _get_db()
+        return _db_conn
+
 # ─── Pipeline state ────────────────────────────────────────────────────────────
 _state = {"running": False, "stage": "complete", "progress": 100,
           "last_run": None, "log": []}
@@ -111,7 +144,12 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_community ON properties(community);
         CREATE INDEX IF NOT EXISTS idx_flood     ON properties(flood_zone);
         CREATE INDEX IF NOT EXISTS idx_assessed  ON properties(assessed);
+        CREATE INDEX IF NOT EXISTS idx_water     ON properties(water_feet);
+        CREATE INDEX IF NOT EXISTS idx_year      ON properties(year_built);
+        CREATE INDEX IF NOT EXISTS idx_sqft      ON properties(sqft);
+        CREATE INDEX IF NOT EXISTS idx_beds      ON properties(beds);
     """)
+    con.execute("PRAGMA journal_mode=WAL")
     con.commit()
     con.close()
 
@@ -511,6 +549,7 @@ def run_pipeline():
             con.commit(); con.close()
         except Exception: pass
 
+        _invalidate_cache()
         with _lock:
             _state.update(running=False, stage="complete",
                           progress=100, last_run=run_rec)
@@ -562,48 +601,53 @@ def api_properties():
         clauses.append("(address LIKE ? OR owner LIKE ? OR folio LIKE ? OR community LIKE ?)")
         vals += [like, like, like, like]
 
+    per_page = min(per_page, 200)
+
+    LIST_COLS = ("folio,address,community,wf_type,prop_type,sqft,lot_sqft,"
+                 "beds,baths,year_built,assessed,land_value,building_value,"
+                 "flood_zone,water_feet,last_sale_price,last_sale_date,owner,lat,lng,water_body")
+
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-    con = sqlite3.connect(DB_PATH)
-    con.row_factory = sqlite3.Row
+    con = get_db()
     total = con.execute(f"SELECT COUNT(*) FROM properties {where}", vals).fetchone()[0]
     rows  = con.execute(
-        f"SELECT * FROM properties {where} ORDER BY {sort_col} {order}"
+        f"SELECT {LIST_COLS} FROM properties {where} ORDER BY {sort_col} {order}"
         f" LIMIT ? OFFSET ?", vals + [per_page, page * per_page]
     ).fetchall()
-    con.close()
     return jsonify({"total": total, "page": page, "per_page": per_page,
                     "data": [dict(r) for r in rows]})
 
 
 @app.route("/api/stats")
 def api_stats():
-    con = sqlite3.connect(DB_PATH)
-    con.row_factory = sqlite3.Row
-    t = con.execute(
-        "SELECT COUNT(*) c, SUM(assessed) tv, MAX(assessed) mx, AVG(water_feet) aw"
-        " FROM properties"
-    ).fetchone()
-    by_type  = [dict(r) for r in con.execute(
-        "SELECT wf_type, COUNT(*) cnt, AVG(assessed) avg_price,"
-        " SUM(assessed) total_value, AVG(water_feet) avg_water"
-        " FROM properties GROUP BY wf_type ORDER BY cnt DESC")]
-    by_flood = [dict(r) for r in con.execute(
-        "SELECT flood_zone, COUNT(*) cnt, AVG(assessed) avg_price"
-        " FROM properties GROUP BY flood_zone")]
-    top10    = [dict(r) for r in con.execute(
-        "SELECT * FROM properties ORDER BY assessed DESC LIMIT 10")]
-    by_comm  = [dict(r) for r in con.execute(
-        "SELECT community, wf_type, COUNT(*) cnt,"
-        " AVG(assessed) avg_price, MAX(assessed) max_price, flood_zone flood"
-        " FROM properties GROUP BY community ORDER BY cnt DESC")]
-    last_run = con.execute(
-        "SELECT * FROM pipeline_runs ORDER BY id DESC LIMIT 1").fetchone()
-    con.close()
-    return jsonify({"total_count": t["c"], "total_value": t["tv"] or 0,
-                    "max_sale": t["mx"] or 0, "avg_water": round(t["aw"] or 0),
-                    "by_type": by_type, "by_flood": by_flood,
-                    "top10": top10, "by_comm": by_comm,
-                    "last_run": dict(last_run) if last_run else None})
+    def _build_stats():
+        con = get_db()
+        t = con.execute(
+            "SELECT COUNT(*) c, SUM(assessed) tv, MAX(assessed) mx, AVG(water_feet) aw"
+            " FROM properties"
+        ).fetchone()
+        by_type  = [dict(r) for r in con.execute(
+            "SELECT wf_type, COUNT(*) cnt, AVG(assessed) avg_price,"
+            " SUM(assessed) total_value, AVG(water_feet) avg_water"
+            " FROM properties GROUP BY wf_type ORDER BY cnt DESC")]
+        by_flood = [dict(r) for r in con.execute(
+            "SELECT flood_zone, COUNT(*) cnt, AVG(assessed) avg_price"
+            " FROM properties GROUP BY flood_zone")]
+        top10    = [dict(r) for r in con.execute(
+            "SELECT folio,address,community,wf_type,assessed,water_feet,flood_zone"
+            " FROM properties ORDER BY assessed DESC LIMIT 10")]
+        by_comm  = [dict(r) for r in con.execute(
+            "SELECT community, wf_type, COUNT(*) cnt,"
+            " AVG(assessed) avg_price, MAX(assessed) max_price, flood_zone flood"
+            " FROM properties GROUP BY community ORDER BY cnt DESC")]
+        last_run = con.execute(
+            "SELECT * FROM pipeline_runs ORDER BY id DESC LIMIT 1").fetchone()
+        return {"total_count": t["c"], "total_value": t["tv"] or 0,
+                "max_sale": t["mx"] or 0, "avg_water": round(t["aw"] or 0),
+                "by_type": by_type, "by_flood": by_flood,
+                "top10": top10, "by_comm": by_comm,
+                "last_run": dict(last_run) if last_run else None}
+    return jsonify(_cached("stats", _build_stats))
 
 
 @app.route("/api/pipeline/status")
@@ -622,10 +666,8 @@ def api_trigger():
 
 @app.route("/api/properties/<folio>")
 def api_property(folio):
-    con = sqlite3.connect(DB_PATH)
-    con.row_factory = sqlite3.Row
+    con = get_db()
     row = con.execute("SELECT * FROM properties WHERE folio=?", (folio,)).fetchone()
-    con.close()
     return jsonify(dict(row)) if row else (jsonify({"error": "not found"}), 404)
 
 
@@ -634,15 +676,13 @@ def api_building(prefix):
     """Return all units sharing the same 10-digit folio prefix (same building)."""
     if len(prefix) != 10 or not prefix.isdigit():
         return jsonify({"error": "prefix must be 10 digits"}), 400
-    con = sqlite3.connect(DB_PATH)
-    con.row_factory = sqlite3.Row
+    con = get_db()
     rows = con.execute(
         "SELECT folio, address, prop_type, assessed, land_value, building_value,"
         " beds, baths, sqft, last_sale_price, last_sale_date, flood_zone, year_built"
         " FROM properties WHERE folio LIKE ? ORDER BY folio",
         (prefix + "%",)
     ).fetchall()
-    con.close()
     return jsonify([dict(r) for r in rows])
 
 
@@ -651,8 +691,7 @@ def api_alerts():
     """Return all active legal encumbrances, optionally filtered by folio."""
     folio    = request.args.get("folio")
     severity = request.args.get("severity")
-    con = sqlite3.connect(DB_PATH)
-    con.row_factory = sqlite3.Row
+    con = get_db()
     clauses, vals = [], []
     if folio:    clauses.append("a.folio=?");       vals.append(folio)
     if severity: clauses.append("a.severity=?");    vals.append(severity)
@@ -666,12 +705,10 @@ def api_alerts():
           CASE a.severity WHEN 'red' THEN 0 WHEN 'orange' THEN 1 ELSE 2 END,
           a.rec_date DESC
     """, vals).fetchall()
-    # Summary counts
     summary = con.execute("""
         SELECT severity, COUNT(DISTINCT folio) cnt
         FROM property_alerts GROUP BY severity
     """).fetchall()
-    con.close()
     return jsonify({
         "alerts":  [dict(r) for r in rows],
         "summary": {r["severity"]: r["cnt"] for r in summary},
@@ -692,8 +729,7 @@ def api_alerts_scan():
 def api_complaints():
     """Return foreclosure complaints, optionally filtered by folio."""
     folio = request.args.get("folio")
-    con = sqlite3.connect(DB_PATH)
-    con.row_factory = sqlite3.Row
+    con = get_db()
     if folio:
         rows = con.execute(
             "SELECT * FROM complaints WHERE folio=? ORDER BY date_filed DESC",
@@ -709,7 +745,6 @@ def api_complaints():
         """).fetchall()
     total    = con.execute("SELECT COUNT(*) FROM complaints").fetchone()[0]
     matched  = con.execute("SELECT COUNT(*) FROM complaints WHERE folio IS NOT NULL").fetchone()[0]
-    con.close()
     return jsonify({
         "complaints": [dict(r) for r in rows],
         "total": total,
@@ -717,16 +752,8 @@ def api_complaints():
     })
 
 
-@app.route("/api/flagged")
-def api_flagged():
-    """
-    Unified flagged-property list: combines legal alerts + foreclosure complaints.
-    Returns one entry per property, with severity, alerts list, and complaints list.
-    """
-    con = sqlite3.connect(DB_PATH)
-    con.row_factory = sqlite3.Row
-
-    # All properties that have at least one alert or complaint
+def _build_flagged():
+    con = get_db()
     alert_rows = con.execute("""
         SELECT a.folio, a.doc_type, a.severity, a.rec_date, a.first_party, a.second_party
         FROM property_alerts a
@@ -740,7 +767,6 @@ def api_flagged():
         ORDER BY date_filed DESC
     """).fetchall()
 
-    # Group by folio
     by_folio = {}
     for a in alert_rows:
         f = a["folio"]
@@ -754,7 +780,6 @@ def api_flagged():
             by_folio[f] = {"alerts": [], "complaints": []}
         by_folio[f]["complaints"].append(dict(c))
 
-    # Enrich with property data
     folios = list(by_folio.keys())
     if folios:
         placeholders = ",".join("?" * len(folios))
@@ -790,7 +815,6 @@ def api_flagged():
             "complaints":      data["complaints"],
         })
 
-    # Sort: red first, then orange, yellow, complaint-only
     result.sort(key=lambda r: SEVER_ORDER.get(r["worst_severity"], 9))
 
     counts = {
@@ -799,8 +823,19 @@ def api_flagged():
         "yellow":     sum(1 for r in result if r["worst_severity"] == "yellow"),
         "complaint":  sum(1 for r in result if r["worst_severity"] == "complaint"),
     }
-    con.close()
-    return jsonify({"flagged": result, "counts": counts})
+    return {"flagged": result, "counts": counts}
+
+
+@app.route("/api/flagged")
+def api_flagged():
+    return jsonify(_cached("flagged", _build_flagged))
+
+
+@app.route("/api/flagged/counts")
+def api_flagged_counts():
+    """Lightweight endpoint — returns only severity counts for the tab badge."""
+    data = _cached("flagged", _build_flagged)
+    return jsonify(data["counts"])
 
 
 @app.route("/api/complaints/sync", methods=["POST"])

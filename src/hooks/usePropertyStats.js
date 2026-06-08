@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { API_BASE } from "../constants/index.js";
 
 const EMPTY = {
@@ -6,25 +6,25 @@ const EMPTY = {
   by_type: [], by_flood: [], top10: [], by_comm: [], last_run: null,
 };
 
-export function usePropertyStats() {
+export function usePropertyStats(pipelineRunning = false) {
   const [stats,   setStats]   = useState(EMPTY);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(false);
 
-  const refresh = () => {
+  const refresh = useCallback(() => {
     setLoading(true);
     fetch(`${API_BASE}/api/stats`)
       .then(r => r.json())
       .then(d => { setStats(d); setError(false); setLoading(false); })
       .catch(() => { setStats(EMPTY); setError(true); setLoading(false); });
-  };
+  }, []);
 
   useEffect(() => {
     refresh();
-    // Re-fetch stats every 30 s so they update when the pipeline finishes
-    const id = setInterval(refresh, 30000);
+    const ms = pipelineRunning ? 5000 : 300000;
+    const id = setInterval(refresh, ms);
     return () => clearInterval(id);
-  }, []);
+  }, [refresh, pipelineRunning]);
 
   return { ...stats, loading, error };
 }

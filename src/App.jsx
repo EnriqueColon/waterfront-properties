@@ -7,7 +7,6 @@ import { SortButton }  from "./components/SortButton.jsx";
 import { usePipeline }                       from "./hooks/usePipeline.js";
 import { useFilteredProperties, PAGE_SIZE }  from "./hooks/useFilteredProperties.js";
 import { usePropertyStats }                  from "./hooks/usePropertyStats.js";
-import { useAlerts }                         from "./hooks/useAlerts.js";
 import { useFlagged }                        from "./hooks/useFlagged.js";
 import { fmtM, fmtN, tc, fc }               from "./utils/format.js";
 import { WF_TYPES, PRICE_RANGES, FLOOD_ZONES } from "./constants/index.js";
@@ -56,9 +55,8 @@ export default function App() {
 
   const pipeline = usePipeline();
   const filters  = useFilteredProperties();
-  const stats    = usePropertyStats();
-  const { summary: alertSummary } = useAlerts();
-  const { flagged, counts: flagCounts, loading: flagLoading, reload: reloadFlagged } = useFlagged();
+  const stats    = usePropertyStats(pipeline.pRunning);
+  const { flagged, counts: flagCounts, loading: flagLoading, reload: reloadFlagged } = useFlagged(tab);
 
   // Derive community list from real stats data
   const communityNames = stats.by_comm.map(c => c.community);
