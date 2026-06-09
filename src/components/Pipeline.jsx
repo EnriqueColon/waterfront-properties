@@ -1,7 +1,10 @@
 import { STAGES, STAGE_LABELS } from "../constants/index.js";
 
-export function Pipeline({ stage, progress, running, lastRun, onTrigger }) {
+export function Pipeline({ stage, progress, running, lastRun, onTrigger, enrichment, onTriggerEnrichment }) {
   const ci = STAGES.indexOf(stage);
+
+  const enrichPct = enrichment?.total > 0
+    ? Math.round((enrichment.done / enrichment.total) * 100) : 0;
 
   return (
     <div style={{ background: "#f0f7ff", border: "1px solid #bfdbfe", borderRadius: 6, padding: "13px 16px", marginBottom: 12 }}>
@@ -89,6 +92,45 @@ export function Pipeline({ stage, progress, running, lastRun, onTrigger }) {
           <span>NEXT: <b style={{ color: "#0369a1" }}>24h auto</b></span>
         </div>
       )}
+
+      {/* PA Enrichment Status */}
+      <div style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid #dbeafe" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+          <div style={{ fontSize: 10, color: "#64748b" }}>
+            <span style={{ fontWeight: 700, color: "#7c3aed", letterSpacing: 1 }}>PA VALUE ENRICHMENT</span>
+            {enrichment?.running && (
+              <span style={{ marginLeft: 8 }}>
+                {enrichment.done?.toLocaleString()}/{enrichment.total?.toLocaleString()}
+                {enrichment.eta_minutes > 0 && ` · ~${Math.round(enrichment.eta_minutes)} min left`}
+              </span>
+            )}
+            {!enrichment?.running && enrichment?.done > 0 && (
+              <span style={{ marginLeft: 8, color: "#16a34a" }}>
+                ✓ {enrichment.done?.toLocaleString()} enriched
+              </span>
+            )}
+          </div>
+          <button
+            onClick={onTriggerEnrichment}
+            disabled={enrichment?.running}
+            style={{
+              background: enrichment?.running ? "#e2e8f0" : "#7c3aed",
+              border: "none",
+              color: enrichment?.running ? "#94a3b8" : "#ffffff",
+              fontFamily: "inherit", fontSize: 9, fontWeight: 700, letterSpacing: 1,
+              padding: "4px 10px", borderRadius: 3,
+              cursor: enrichment?.running ? "not-allowed" : "pointer", textTransform: "uppercase",
+            }}
+          >
+            {enrichment?.running ? `${enrichPct}%` : "▶ Enrich Values"}
+          </button>
+        </div>
+        {enrichment?.running && (
+          <div style={{ background: "#ede9fe", borderRadius: 3, height: 3, overflow: "hidden" }}>
+            <div style={{ height: 3, width: `${enrichPct}%`, background: "linear-gradient(90deg,#7c3aed,#a78bfa)", transition: "width 1s ease" }} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }

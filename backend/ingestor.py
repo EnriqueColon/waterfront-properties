@@ -23,6 +23,7 @@ from flask_cors import CORS
 from apscheduler.schedulers.background import BackgroundScheduler
 from legal_scanner import run_legal_scan
 from complaint_syncer import run_complaint_sync
+from pa_enricher import run_enrichment, enrich_state, init_enrichment_table
 
 # ─── Endpoints (all verified live) ────────────────────────────────────────────
 MDC_BASE    = "https://gis.miamidade.gov/arcgis/rest/services/MD_LandInformation/MapServer"
@@ -72,6 +73,10 @@ def _cached(key, builder):
 
 def _invalidate_cache():
     _cache.clear()
+
+def _run_enrichment_and_invalidate(**kwargs):
+    run_enrichment(**kwargs)
+    _invalidate_cache()
 
 # ─── Shared DB connection (reused across requests) ───────────────────────────
 def _get_db():
@@ -152,6 +157,7 @@ def init_db():
     con.execute("PRAGMA journal_mode=WAL")
     con.commit()
     con.close()
+    init_enrichment_table()
 
 # ─── ArcGIS REST helpers ────────────────────────────────────────────────────────
 def _get(url, params, retries=4):
@@ -529,6 +535,9 @@ def run_pipeline():
         total = inserted + updated
         _set("store", 96, f"Stage 5 done — {total} records in DB")
 
+        # Auto-start PA value enrichment after successful pipeline
+        threading.Thread(target=_run_enrichment_and_invalidate, kwargs={"log_fn": _log}, daemon=True).start()
+
     except Exception as exc:
         status, error = "error", str(exc)
         _log(f"Pipeline ERROR: {exc}")
@@ -847,33 +856,65 @@ def api_complaints_sync():
     return jsonify({"ok": True, "msg": "Complaint sync started"})
 
 
+@app.route("/api/enrichment/status")
+def api_enrichment_status():
+    """Return current PA enrichment progress."""
+    return jsonify(enrich_state())
+
+
+@app.route("/api/enrichment/trigger", methods=["POST"])
+def api_enrichment_trigger():
+    """Start PA enrichment in background. Pass ?force=1 to re-enrich all."""
+    state = enrich_state()
+    if state["running"]:
+        return jsonify({"ok": False, "msg": "Enrichment already running"}), 409
+    force = request.args.get("force", "0") == "1"
+    threading.Thread(target=_run_enrichment_and_invalidate, kwargs={"log_fn": _log, "force": force}, daemon=True).start()
+    return jsonify({"ok": True, "msg": "PA enrichment started"})
+
+
 @app.route("/")
 def index():
     return jsonify({"service": "Miami-Dade Waterfront DB",
                     "routes": ["/api/properties", "/api/stats",
                                "/api/pipeline/status", "/api/pipeline/trigger",
                                "/api/alerts", "/api/alerts/scan",
-                               "/api/complaints", "/api/complaints/sync"]})
+                               "/api/complaints", "/api/complaints/sync",
+                               "/api/enrichment/status", "/api/enrichment/trigger"]})
 
 
 # ─── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     print("Initializing DB…")
     init_db()
+    init_enrichment_table()
 
     con   = sqlite3.connect(DB_PATH)
     count = con.execute("SELECT COUNT(*) FROM properties").fetchone()[0]
+    enriched = 0
+    try:
+        enriched = con.execute("SELECT COUNT(*) FROM enrichment_log WHERE status='ok'").fetchone()[0]
+    except Exception:
+        pass
     con.close()
 
     if count == 0:
         print("DB empty — starting initial pipeline run in background…")
         threading.Thread(target=run_pipeline, daemon=True).start()
     else:
-        print(f"DB has {count:,} existing records — skipping initial ingest")
-        print("POST /api/pipeline/trigger to force a refresh")
+        print(f"DB has {count:,} existing records ({enriched:,} enriched)")
+        if enriched < count:
+            print(f"  {count - enriched:,} properties need PA enrichment — starting in background…")
+            threading.Thread(target=_run_enrichment_and_invalidate, kwargs={"log_fn": _log}, daemon=True).start()
+        else:
+            print("  All properties enriched — POST /api/enrichment/trigger?force=1 to re-run")
 
     scheduler = BackgroundScheduler()
-    scheduler.add_job(run_pipeline,  "interval", hours=24, id="daily_ingest")
+    scheduler.add_job(run_pipeline, "interval", hours=24, id="daily_ingest")
+    scheduler.add_job(
+        lambda: _run_enrichment_and_invalidate(log_fn=_log),
+        "cron", hour=2, minute=0, id="nightly_enrichment"
+    )
     scheduler.add_job(
         lambda: run_legal_scan(log_fn=_log),
         "cron", day_of_week="fri", hour=6, minute=0, id="weekly_legal_scan"
@@ -885,6 +926,7 @@ if __name__ == "__main__":
     scheduler.start()
     print("Legal scan scheduled: every Friday at 6:00 AM")
     print("Complaint sync scheduled: every Friday at 7:00 AM")
+    print("PA enrichment scheduled: nightly at 2:00 AM")
 
     print(f"\nAPI:  http://localhost:{API_PORT}")
     print("Docs: /api/properties  /api/stats  /api/pipeline/status\n")

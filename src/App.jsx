@@ -120,6 +120,8 @@ export default function App() {
             stage={pipeline.pStage} progress={pipeline.pProg}
             running={pipeline.pRunning} lastRun={pipeline.lastRun}
             onTrigger={pipeline.triggerPipeline}
+            enrichment={pipeline.enrichment}
+            onTriggerEnrichment={pipeline.triggerEnrichment}
           />
 
           {stats.error && (
@@ -540,6 +542,8 @@ export default function App() {
             stage={pipeline.pStage} progress={pipeline.pProg}
             running={pipeline.pRunning} lastRun={pipeline.lastRun}
             onTrigger={pipeline.triggerPipeline}
+            enrichment={pipeline.enrichment}
+            onTriggerEnrichment={pipeline.triggerEnrichment}
           />
 
           <div style={{ fontSize:11, color:"#94a3b8", fontWeight:600, letterSpacing:0.8, textTransform:"uppercase", margin:"6px 0 2px" }}>Data Ingestion Architecture</div>

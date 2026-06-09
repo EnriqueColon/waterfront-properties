@@ -6,6 +6,7 @@ export function usePipeline() {
   const [pProg,    setPProg]    = useState(100);
   const [pRunning, setPRunning] = useState(false);
   const [lastRun,  setLastRun]  = useState(null);
+  const [enrichment, setEnrichment] = useState(null);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -15,18 +16,21 @@ export function usePipeline() {
       setPProg(d.progress  ?? 100);
       setPRunning(d.running ?? false);
       if (d.last_run) setLastRun(d.last_run);
-    } catch (_) {
-      // API not yet reachable — leave defaults
-    }
+    } catch (_) {}
+    try {
+      const res2 = await fetch(`${API_BASE}/api/enrichment/status`);
+      const e = await res2.json();
+      setEnrichment(e);
+    } catch (_) {}
   }, []);
 
-  // Poll every 2 s while running, every 30 s at rest
   useEffect(() => {
     fetchStatus();
-    const ms = pRunning ? 2000 : 30000;
+    const isActive = pRunning || enrichment?.running;
+    const ms = isActive ? 3000 : 30000;
     const id = setInterval(fetchStatus, ms);
     return () => clearInterval(id);
-  }, [fetchStatus, pRunning]);
+  }, [fetchStatus, pRunning, enrichment?.running]);
 
   const triggerPipeline = useCallback(async () => {
     if (pRunning) return;
@@ -40,5 +44,15 @@ export function usePipeline() {
     }
   }, [pRunning]);
 
-  return { pStage, pProg, pRunning, lastRun, triggerPipeline };
+  const triggerEnrichment = useCallback(async () => {
+    if (enrichment?.running) return;
+    try {
+      await fetch(`${API_BASE}/api/enrichment/trigger`, { method: "POST" });
+      fetchStatus();
+    } catch (err) {
+      console.error("Enrichment trigger failed:", err);
+    }
+  }, [enrichment?.running, fetchStatus]);
+
+  return { pStage, pProg, pRunning, lastRun, triggerPipeline, enrichment, triggerEnrichment };
 }
